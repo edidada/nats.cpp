@@ -18,7 +18,7 @@
 
 namespace nats {
 
-using namespace std::chrono_literals;
+using namespace std::literals;
 namespace rng = std::ranges;
 namespace vws = std::views;
 namespace cobalt = boost::cobalt;
@@ -31,7 +31,7 @@ template <typename T> using spy = T *;
 
 using byte = char;
 using optional_str = std::optional<std::string>;
-using buf_view_t = std::span<byte>;
+using buf_view_t = std::string_view;
 using str_view = std::string_view;
 using buf_t = std::vector<byte>;
 using timeout_t = std::chrono::milliseconds;
@@ -104,6 +104,28 @@ template <typename T>
 concept StringLike = std::convertible_to<T, std::string> or
                      std::convertible_to<T, std::string_view>;
 
+template <StringLike Str> //
+constexpr std::decay_t<Str> trim_front(Str &&str, str_view spaces) {
+  auto sv = str_view{str};
+  auto begin = sv.find_first_not_of(spaces);
+  begin = begin == sv.npos ? sv.size() : begin;
+  return sv.substr(begin);
+}
+
+template <StringLike Str> //
+constexpr std::decay_t<Str> trim_back(Str &&str, str_view spaces) {
+  auto sv = str_view{str};
+  auto reversed = vws::reverse(sv);
+  auto non_space = [spaces](char c) { return not spaces.contains(c); };
+  auto end = rng::find_if(reversed, non_space);
+  return sv.substr(0, static_cast<size_t>(std::distance(end, reversed.end())));
+}
+
+template <StringLike Str> //
+constexpr std::decay_t<Str> trim(Str &&str, str_view spaces) {
+  return trim_back(trim_front(str, spaces), spaces);
+}
+
 constexpr struct ByDelims_t {
 } by_delim;
 constexpr struct ByPattern_t {
@@ -132,6 +154,7 @@ std::vector<std::decay_t<Str>> split(ByDelims_t, Str &&str, str_view delims) {
   State state = delims.contains(*begin) ? Delim : Word;
   str_view::size_type word_start = 0, word_end = 0;
 
+  // use a simple state machine, that helps tracking where we are
   for (auto subs = str_view{begin, end}; subs.size() > 0;) {
     switch (state) {
     case Word: {

@@ -117,17 +117,17 @@ struct Parser {
 
     if (auto cmd = control_line.substr(0, p), rest = control_line.substr(p);
         cmd == op::MSG) {
-      return _parseMsgFields(split(by_delim, rest, " \t"));
-    } else if (cmd == op::INFO) {
-      return {.op = Result::Info, .payload = rest};
+      return _parseMsgFields(split(by_delim, rest, " \t\r\n"sv));
     } else if (cmd == op::PING) {
       return {.op = Result::Ping};
     } else if (cmd == op::PONG) {
       return {.op = Result::Pong};
     } else if (cmd == op::OK) {
       return {.op = Result::Ok};
+    } else if (cmd == op::INFO) {
+      return {.op = Result::Info, .payload = trim(rest, " \t\r\n"sv)};
     } else if (cmd == op::ERR) {
-      return {.op = Result::Err, .payload = rest};
+      return {.op = Result::Err, .payload = trim(rest, " \t\r\n"sv)};
     } else {
       return {.error = err::InvalidMsg};
     }
