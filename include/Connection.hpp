@@ -14,13 +14,6 @@
 
 namespace nats {
 
-template <typename... Args>
-std::string format(std::string_view fmt, Args &&...args) {
-  char buf[1024];
-  sprintf(buf, fmt.data(), args...);
-  return buf;
-}
-
 struct ConnectConfig {
   std::string addr;
   std::string port;

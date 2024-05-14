@@ -3,6 +3,7 @@
 #pragma once
 #include <boost/cobalt/generator.hpp>
 #include <boost/cobalt/promise.hpp>
+#include <icecream.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -103,13 +104,57 @@ template <typename T>
 concept StringLike = std::convertible_to<T, std::string> or
                      std::convertible_to<T, std::string_view>;
 
+constexpr struct ByDelims_t {
+} by_delim;
+constexpr struct ByPattern_t {
+} by_pattern;
+
 template <StringLike Str>
-std::vector<std::decay_t<Str>> split(Str &&str, str_view delims) {
+std::vector<std::decay_t<Str>> split(ByPattern_t, Str &&str, str_view pattern) {
   auto rng_to_str = [](auto const &r) {
     return std::decay_t<Str>{r.begin(), r.end()};
   };
-  return str | vws::split(delims) | vws::transform(rng_to_str) |
-         rng::to<std::vector>();
+  auto non_empty = [](auto const &r) { return not r.empty(); };
+  return str | vws::split(pattern) | vws::transform(rng_to_str) |
+         vws::filter(non_empty) | rng::to<std::vector>();
+}
+
+template <StringLike Str>
+std::vector<std::decay_t<Str>> split(ByDelims_t, Str &&str, str_view delims) {
+  enum State { Word, Delim };
+  using Str_t = std::decay_t<Str>;
+
+  std::vector<Str_t> result;
+  auto begin = std::begin(str), end = std::end(str);
+  if (begin == end or delims.size() == 0)
+    return result;
+
+  State state = delims.contains(*begin) ? Delim : Word;
+  str_view::size_type word_start = 0, word_end = 0;
+
+  for (auto subs = str_view{begin, end}; subs.size() > 0;) {
+    switch (state) {
+    case Word: {
+      word_end = subs.find_first_of(delims);
+      if (word_start < word_end)
+        result.emplace_back(subs.substr(0, word_end));
+      if (word_end == subs.npos)
+        return result;
+      subs = subs.substr(word_end);
+      state = Delim;
+      break;
+    }
+    case Delim:
+      word_start = subs.find_first_not_of(delims);
+      if (word_start == subs.npos)
+        return result;
+      subs = subs.substr(word_start);
+      state = Word;
+      word_start = 0;
+      break;
+    }
+  }
+  return result;
 }
 
 // ---------------

@@ -9,7 +9,8 @@ target_link_libraries(nats.test.base PUBLIC nats.base)
 target_compile_definitions(nats.test.base PUBLIC NATS_TEST)
 
 add_executable(nats.test)
-target_sources(nats.test PUBLIC Disruptor.cpp Nuid.cpp)
+target_sources(nats.test PUBLIC
+  Common.cpp Protocol.cpp Disruptor.cpp Nuid.cpp)
 target_link_libraries(nats.test PRIVATE nats.test.base)
 set_target_properties(nats.test PROPERTIES OUTPUT_NAME "nats")
 

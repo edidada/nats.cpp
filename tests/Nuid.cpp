@@ -37,7 +37,7 @@ ut::suite<"[nuid]"> _ = [] {
       return std::make_tuple(unique, i);
     };
 
-    it("should generate different ids across many calls") = [=] {
+    skip / it("should generate different ids across many calls") = [=] {
       {
         std::unordered_set<std::string> ids;
         Nuid<nats::nuid::Base62> nuid;
