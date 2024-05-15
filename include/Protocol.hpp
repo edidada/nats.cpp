@@ -3,7 +3,6 @@
 #pragma once
 #include <Common.hpp>
 
-#include <any>
 #include <format>
 #include <string>
 
@@ -61,6 +60,31 @@ constexpr std::string unsub_cmd(sid_t sid, int max_msgs) {
   return std::format("{} {} {}{}", op::UNSUB, sid, max_msgs_str, CRLF);
 }
 
+// this result is basically for `Msg` type of messages, which is the most
+// frequent/important 'happy path', for other cases, most fields are empty,
+// but those paths are relatively far fewer
+struct ParseResult {
+  enum Op { None, Msg, Info, Ping, Pong, Ok, Err };
+
+  Op op{None};
+  size_t bytes{};
+  str_view subject{};
+  str_view sid{};
+  str_view reply_to{}; // optional
+  str_view payload{};  // optional
+  Header header{};     // optional
+
+  template <typename T> T get(std::string const &field) {
+    auto find = header.find(field);
+    return find == header.end() ? T{} : std::get<T>(find->second);
+  }
+  template <typename T> T set(std::string const &field, T const &value) {
+    header[field] = Value(value);
+  }
+
+  Error err() { return get<Error>(hdr::Error); }
+};
+
 struct Parser {
   constexpr static auto MaxControlLineSize = 4096;
   enum struct State {
@@ -68,100 +92,24 @@ struct Parser {
     AwaitingMsgPayload = 2,
   };
 
-  // this result is basically for `Msg` type of messages, which is the most
-  // frequent/important 'happy path', for other cases, most fields are empty,
-  // but those paths are relatively far fewer
-  struct Result {
-    enum Op { None, Msg, Info, Ping, Pong, Ok, Err };
-
-    Op op{None};
-    str_view subject{};
-    str_view sid{};
-    str_view reply_to{}; // optional
-    size_t bytes{};
-    str_view payload{}; // optional
-    Error error{Error::none()};
-  };
-
   void reset() {
     buf_.clear();
     state_ = State::AwaitingControlLine;
     needed_ = 0;
     header_needed_ = 0;
-    msg_arg_.clear();
   }
 
-  promise_t<Result> parse(buf_view_t data) {
-    switch (state_) {
-      using enum State;
-    case AwaitingControlLine: {
-      Result result = _parseControlLine(data);
-      if (state_ == AwaitingMsgPayload)
-        ; // async read payload and fill result
-      break;
-    }
-    case AwaitingMsgPayload:
-      break;
-    }
-  }
+  promise_t<ParseResult> parse(buf_view_t data);
 
-  Result _parseControlLine(buf_view_t data) {
-    auto sv = str_view{data};
-    auto control_line = sv.substr(0, sv.find(CRLF));
-    // Nats protocol conventions ---
-    // Field Delimiters: The fields of NATS protocol messages are delimited by
-    // whitespace characters (space) or (tab). Multiple whitespace characters
-    // will be treated as a single field delimiter.
-    auto p = control_line.find_first_of(" \t");
-    p = p == str_view::npos ? control_line.size() : p;
-
-    if (auto cmd = control_line.substr(0, p), rest = control_line.substr(p);
-        cmd == op::MSG) {
-      return _parseMsgFields(split(by_delim, rest, " \t\r\n"sv));
-    } else if (cmd == op::PING) {
-      return {.op = Result::Ping};
-    } else if (cmd == op::PONG) {
-      return {.op = Result::Pong};
-    } else if (cmd == op::OK) {
-      return {.op = Result::Ok};
-    } else if (cmd == op::INFO) {
-      return {.op = Result::Info, .payload = trim(rest, " \t\r\n"sv)};
-    } else if (cmd == op::ERR) {
-      return {.op = Result::Err, .payload = trim(rest, " \t\r\n"sv)};
-    } else {
-      return {.error = err::InvalidMsg};
-    }
-  }
-
-  Result _parseMsgFields(std::vector<str_view> fields) {
-    auto size = fields.size();
-    if (size != 3 and size != 4)
-      return {.error = err::InvalidMsg};
-    bool has_reply_to = size == 4;
-    str_view reply_to = has_reply_to ? fields[2] : "";
-    auto bytes_str = has_reply_to ? fields[3] : fields[2];
-    size_t bytes = 0;
-    if (auto res = std::from_chars(bytes_str.begin(), bytes_str.end(), bytes);
-        res.ec != std::errc{})
-      return {.error = err::InvalidMsg};
-
-    state_ = State::AwaitingMsgPayload;
-    return {
-        .op = Result::Msg,
-        .subject = fields[0],
-        .sid = fields[1],
-        .reply_to = reply_to,
-        .bytes = bytes,
-    };
-  }
-
-  void _processPayload(buf_view_t data) {}
+  Header _parseInfoHeader(str_view sv);
+  ParseResult _parseControlLine(buf_view_t data);
+  ParseResult _parseMsgFields(std::vector<str_view> fields);
+  void _processPayload(buf_view_t data);
 
   buf_t buf_;
   State state_;
   size_t needed_;
   size_t header_needed_;
-  std::unordered_map<std::string, std::any> msg_arg_;
 };
 
 } // namespace nats

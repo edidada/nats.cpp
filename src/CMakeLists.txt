@@ -11,6 +11,10 @@ target_include_directories(nats.base INTERFACE ../include)
 target_link_directories(nats.base INTERFACE ~/Apps/boost_1_85_0/stage/lib)
 target_link_libraries(nats.base INTERFACE stdc++exp)
 
+add_library(nats)
+target_sources(nats PUBLIC Protocol.cpp)
+target_link_libraries(nats PUBLIC nats.base)
+
 if(NATS_USER_CONFIG_HEADER)
   if(EXISTS ${NATS_USER_CONFIG_HEADER})
     target_compile_definitions(nats.base INTERFACE NATS_USER_CONFIG_HEADER="${NATS_USER_CONFIG_HEADER}")
@@ -21,7 +25,7 @@ endif()
 
 include(GNUInstallDirs)
 
-add_executable(nats)
-target_sources(nats PUBLIC Main.cpp)
-target_link_libraries(nats PUBLIC nats.base)
+# add_executable(nats)
+# target_sources(nats PUBLIC Main.cpp)
+# target_link_libraries(nats PUBLIC nats.base)
 

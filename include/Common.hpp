@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <map>
 #include <ranges>
 #include <source_location>
 #include <stacktrace>
@@ -38,8 +39,6 @@ using timeout_t = std::chrono::milliseconds;
 
 template <typename T> using promise_t = cobalt::promise<T>;
 template <typename T> using generator_t = cobalt::generator<T>;
-
-using Header = std::unordered_map<std::string, std::vector<std::string>>;
 
 struct JetStreamContext;
 struct JetStreamManager;
@@ -157,7 +156,7 @@ std::vector<std::decay_t<Str>> split(ByDelims_t, Str &&str, str_view delims) {
   // use a simple state machine, that helps tracking where we are
   for (auto subs = str_view{begin, end}; subs.size() > 0;) {
     switch (state) {
-    case Word: {
+    case Word:
       word_end = subs.find_first_of(delims);
       if (word_start < word_end)
         result.emplace_back(subs.substr(0, word_end));
@@ -166,7 +165,6 @@ std::vector<std::decay_t<Str>> split(ByDelims_t, Str &&str, str_view delims) {
       subs = subs.substr(word_end);
       state = Delim;
       break;
-    }
     case Delim:
       word_start = subs.find_first_not_of(delims);
       if (word_start == subs.npos)
@@ -318,6 +316,41 @@ inline auto MaxConnectionsExceeded =
 inline auto ConnectionNotTLS = Error("nats: connection is not tls");
 
 } // namespace err
+
+namespace hdr {
+
+constexpr std::string ServerId = "server_id";
+constexpr std::string ServerName = "server_name";
+constexpr std::string Version = "version";
+constexpr std::string Go = "go";
+constexpr std::string Host = "host";
+constexpr std::string Port = "port";
+constexpr std::string Headers = "headers";
+constexpr std::string MaxPayload = "max_payload";
+constexpr std::string Proto = "proto";
+constexpr std::string ClientId = "client_id";
+constexpr std::string AuthRequired = "auth_required";
+constexpr std::string TlsRequired = "tls_required";
+constexpr std::string TlsVerify = "tls_verify";
+constexpr std::string TlsAvailable = "tls_available";
+constexpr std::string ConnectUrls = "connect_urls";
+constexpr std::string WsConnectUrls = "ws_connect_urls";
+constexpr std::string Ldm = "ldm";
+constexpr std::string GitCommit = "git_commit";
+constexpr std::string JetStream = "jetstream";
+constexpr std::string IP = "ip";
+constexpr std::string ClientIP = "client_ip";
+constexpr std::string Nonce = "nonce";
+constexpr std::string Cluster = "cluster";
+constexpr std::string Domain = "domain";
+
+constexpr std::string Error = "error";
+
+}; // namespace hdr
+
+using HeaderValue = std::variant<std::vector<std::string>, std::string, int,
+                                 bool, uint64_t, Error>;
+using Header = std::map<std::string, HeaderValue>;
 
 // -----------
 // Statistics
