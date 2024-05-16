@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: MIT
 
 # A generic test target.
-add_library(nats.test.base)
-target_sources(nats.test.base PRIVATE Main.cpp)
-target_include_directories(nats.test.base PUBLIC ../extern)
-target_link_libraries(nats.test.base PUBLIC nats.base nats boost_cobalt)
-target_compile_definitions(nats.test.base PUBLIC NATS_TEST)
+add_library(nats.test.base INTERFACE)
+target_include_directories(nats.test.base INTERFACE ../extern)
+target_link_libraries(nats.test.base INTERFACE nats.base nats boost_cobalt)
+target_compile_definitions(nats.test.base INTERFACE NATS_TEST)
 
 add_executable(nats.test)
 target_sources(nats.test PUBLIC

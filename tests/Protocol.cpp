@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: MIT
 #include <Protocol.hpp>
 
+#include <boost/asio/detached.hpp>
+#include <boost/cobalt/main.hpp>
+#include <boost/cobalt/run.hpp>
+#include <boost/cobalt/spawn.hpp>
 #include <boost/ut.hpp>
 
 #include <map>
 
-namespace rng = std::ranges;
-namespace vws = std::views;
 namespace ut = boost::ut;
 using namespace ut;
 using namespace ut::spec;
+using namespace nats;
 
 namespace nats {
 
@@ -23,8 +26,6 @@ str_view _processPayload(buf_view_t data);
 
 namespace protocol {
 ut::suite<"[protocol]"> _ = [] {
-  using namespace nats;
-
   describe("_parseInfoHeader") = [] {
     it("should parse the header and fill Header fields") = [=] mutable {
       // zero
@@ -67,30 +68,91 @@ ut::suite<"[protocol]"> _ = [] {
   };
 
   describe("_parseControlLine") = [] {
-    it("should parse the control line, give result, and set state") =
-        [=] mutable {
-          auto res = _parseControlLine("\r\n"sv);
-          expect(res.op == ParseResult::None and res.err() == err::InvalidMsg);
+    it("should parse the control line, give result, and set state") = [=] mutable {
+      auto res = _parseControlLine("\r\n"sv);
+      expect(res.op == ParseResult::None and res.err() == err::InvalidMsg);
 
-          res = _parseControlLine("+OK\r\n"sv);
-          expect(res.op == ParseResult::Ok and res.err() == Error::none());
-          res = _parseControlLine("-ERR\r\n"sv);
-          expect(res.op == ParseResult::Err and res.err() == Error::none());
-          res = _parseControlLine("-ERR  \t  'error description' \t \r\n "sv);
-          expect(res.op == ParseResult::Err and res.err() == Error::none());
-          expect(res.payload == "'error description'"sv);
-          res = _parseControlLine("PING\r\n"sv);
-          expect(res.op == ParseResult::Ping and res.err() == Error::none());
-          res = _parseControlLine("PONG\r\n"sv);
-          expect(res.op == ParseResult::Pong and res.err() == Error::none());
-          // res = p._parseControlLine(R"(
-          //   INFO    {"server_id":"server
-          //   id","port":8888,"client_id":12345,ldm:true}
-          //   )"s + "\r\n");
-          // expect(res.op == ParseResult::Info and res.err() == Error::none());
-          // expect(res.get<std::string>(hdr::ServerId) == "server id"sv);
-        };
+      res = _parseControlLine("+OK\r\n"sv);
+      expect(res.op == ParseResult::Ok and res.err() == Error::none());
+      res = _parseControlLine("-ERR\r\n"sv);
+      expect(res.op == ParseResult::Err and res.err() == Error(""s));
+      res = _parseControlLine("-ERR  \t  'error description' \t \r\n "sv);
+      expect(res.op == ParseResult::Err and
+             res.err() == Error("'error description'"s));
+      res = _parseControlLine("PING\r\n"sv);
+      expect(res.op == ParseResult::Ping and res.err() == Error::none());
+      res = _parseControlLine("PONG\r\n"sv);
+      expect(res.op == ParseResult::Pong and res.err() == Error::none());
+      res = _parseControlLine(
+          R"(INFO    {"server_id":"server id","port":8888,"client_id":12345,ldm:true})"s +
+          "\r\n");
+      expect(res.op == ParseResult::Info and res.err() == Error::none());
+      expect(res.get<std::string>(hdr::ServerId) == "server id"sv);
+      expect(res.get<int>(hdr::Port) == 8888);
+      expect(res.get<uint64_t>(hdr::ClientId) == 12345);
+      expect(res.get<bool>(hdr::Ldm) == true);
+    };
+  };
+
+  describe("parse") = [] {
+    it("should parse the byte stream, and yield ParseResult") = [] {};
   };
 };
 
+task_t<void> test_parse() {
+  // set up a large (4k) buffer, so that we can push first, then pull result
+  channel_t<buf_view_t> chan{MaxControlLineSize};
+
+  co_await [](channel_t<buf_view_t> &chan) -> promise_t<bool> {
+    co_await chan.write("+OK\r\n"sv);
+    auto parser = parse(chan);
+    ParseResult res = co_await parser;
+    expect(res.op == ParseResult::Ok and res.err() == Error::none());
+
+    co_await chan.write("-ERR\r\n"sv);
+    res = co_await parser;
+    expect(res.op == ParseResult::Err and res.err() == Error(""s));
+
+    co_await chan.write("-ERR  \t  'error description' \t \r\n "sv);
+    res = co_await parser;
+    expect(res.op == ParseResult::Err and
+           res.err() == Error("'error description'"s));
+
+    co_await chan.write("PING\r\n"sv);
+    res = co_await parser;
+    expect(res.op == ParseResult::Ping and res.err() == Error::none());
+
+    co_await chan.write("PONG\r\n"sv);
+    res = co_await parser;
+    expect(res.op == ParseResult::Pong and res.err() == Error::none());
+
+    co_await chan.write("INFO {}\r\n");
+    res = co_await parser;
+    expect(res.op == ParseResult::Info and res.err() == Error::none());
+
+    // auto line = "INFO {\"server_id\":\"server id\","
+    //             "\"port\":8888,\"client_id\":12345,\"ldm\":true}\r\n";
+    // co_await chan.write(line);
+    // res = co_await parser;
+    // expect(res.op == ParseResult::Info and res.err() == Error::none());
+
+    co_return true;
+  }(chan);
+
+  chan.close();
+  co_return;
+}
+
 } // namespace protocol
+
+int main() {
+  cobalt::run(protocol::test_parse());
+
+  return 0;
+}
+
+// cobalt::main co_main(int, char *[]) {
+//   co_await protocol::test_parse();
+//
+//   co_return 0;
+// }

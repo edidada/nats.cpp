@@ -74,7 +74,13 @@ struct ParseResult {
   str_view payload{};  // optional
   Header header{};     // optional
 
-  template <typename T> T get(std::string const &field) {
+  void reset() {
+    op = None;
+    bytes = {};
+    subject = sid = reply_to = payload = {};
+    header = {};
+  }
+  template <typename T> T get(std::string const &field) const {
     auto find = header.find(field);
     return find == header.end() ? T{} : std::get<T>(find->second);
   }
@@ -86,6 +92,6 @@ struct ParseResult {
 };
 
 constexpr static auto MaxControlLineSize = 4096;
-generator_t<ParseResult> parse(buf_view_t data);
+generator_t<ParseResult> parse(channel_t<buf_view_t> &chan);
 
 } // namespace nats

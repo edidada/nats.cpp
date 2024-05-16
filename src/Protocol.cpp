@@ -7,30 +7,26 @@
 
 namespace nats {
 
-enum struct Awaiting {
-  ControlLine = 1,
-  MsgPayload = 2,
-};
-
 ParseResult _parseControlLine(buf_view_t data);
 Header _parseInfoHeader(str_view sv);
 ParseResult _parseMsgFields(std::vector<str_view> fields);
 str_view _processPayload(buf_view_t data);
 
 generator_t<ParseResult> parse(channel_t<buf_view_t> &chan) {
-  auto state = Awaiting::ControlLine;
+  enum struct Awaiting {
+    ControlLine,
+    MsgPayload,
+  } state = Awaiting::ControlLine;
   buf_view_t input{};
   ParseResult result{};
 
   while (chan.is_open()) {
-    // TODO: handle extra bytes after crlf
     switch (state) {
     case Awaiting::ControlLine:
       input = co_await chan.read();
       result = _parseControlLine(input);
       if (result.op == ParseResult::Msg)
         state = Awaiting::MsgPayload;
-
       if (state != Awaiting::MsgPayload)
         co_yield result;
       break;
@@ -39,10 +35,11 @@ generator_t<ParseResult> parse(channel_t<buf_view_t> &chan) {
       result.payload = _processPayload(input);
       co_yield result;
       state = Awaiting::ControlLine;
+      result.reset();
       break;
     }
   }
-  co_return {}; // should return a chan close error?
+  co_return ParseResult{.header = {{hdr::Error, "channel closed"}}};
 }
 
 // -----------
@@ -106,6 +103,11 @@ Error assign_hdr_val(Header &hdr, std::string const &field,
   else
     return err::InvalidMsg;
   return Error::none();
+}
+
+str_view _processPayload(buf_view_t data) {
+  auto end = data.find("\r\n");
+  return data.substr(0, end);
 }
 
 // header parsing doesn't need to be blazingly fast
@@ -174,11 +176,16 @@ ParseResult _parseControlLine(buf_view_t data) {
   } else if (cmd == op::OK) {
     return {.op = ParseResult::Ok};
   } else if (cmd == op::INFO) {
-    return {.op = ParseResult::Info,
-            .header = _parseInfoHeader(
-                trim_back(trim_front(rest, "{ \t\r\n"), "} \t\r\n"))};
+    return {
+        .op = ParseResult::Info,
+        .header = _parseInfoHeader(
+            trim_back(trim_front(rest, "{ \t\r\n"), "} \t\r\n")),
+    };
   } else if (cmd == op::ERR) {
-    return {.op = ParseResult::Err, .payload = trim(rest, " \t\r\n"sv)};
+    return {
+        .op = ParseResult::Err,
+        .header = {{hdr::Error, Error(std::string(trim(rest, " \t\r\n"sv)))}},
+    };
   } else {
     return {.header = {{hdr::Error, err::InvalidMsg}}};
   }
@@ -204,7 +211,5 @@ ParseResult _parseMsgFields(std::vector<str_view> fields) {
       .reply_to = reply_to,
   };
 }
-
-str_view _processPayload(buf_view_t data) {}
 
 } // namespace nats

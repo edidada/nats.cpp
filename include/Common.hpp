@@ -4,6 +4,7 @@
 #include <boost/cobalt/channel.hpp>
 #include <boost/cobalt/generator.hpp>
 #include <boost/cobalt/promise.hpp>
+#include <boost/cobalt/task.hpp>
 #include <icecream.hpp>
 
 #include <chrono>
@@ -23,6 +24,7 @@ namespace nats {
 using namespace std::literals;
 namespace rng = std::ranges;
 namespace vws = std::views;
+namespace asio = boost::asio;
 namespace cobalt = boost::cobalt;
 
 // ------------------------------
@@ -40,6 +42,9 @@ using timeout_t = std::chrono::milliseconds;
 
 template <typename T> //
 using channel_t = cobalt::channel<T>;
+
+template <typename Return> //
+using task_t = cobalt::task<Return>;
 
 template <typename Return> //
 using promise_t = cobalt::promise<Return>;
