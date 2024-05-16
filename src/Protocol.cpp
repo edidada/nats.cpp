@@ -3,23 +3,46 @@
 #include <Protocol.hpp>
 
 #include <charconv>
-#include <functional>
 #include <set>
 
 namespace nats {
 
-promise_t<ParseResult> Parser::parse(buf_view_t data) {
-  switch (state_) {
-    using enum State;
-  case AwaitingControlLine: {
-    ParseResult result = _parseControlLine(data);
-    if (state_ == AwaitingMsgPayload)
-      ; // async read payload and fill result
-    break;
+enum struct Awaiting {
+  ControlLine = 1,
+  MsgPayload = 2,
+};
+
+ParseResult _parseControlLine(buf_view_t data);
+Header _parseInfoHeader(str_view sv);
+ParseResult _parseMsgFields(std::vector<str_view> fields);
+str_view _processPayload(buf_view_t data);
+
+generator_t<ParseResult> parse(channel_t<buf_view_t> &chan) {
+  auto state = Awaiting::ControlLine;
+  buf_view_t input{};
+  ParseResult result{};
+
+  while (chan.is_open()) {
+    // TODO: handle extra bytes after crlf
+    switch (state) {
+    case Awaiting::ControlLine:
+      input = co_await chan.read();
+      result = _parseControlLine(input);
+      if (result.op == ParseResult::Msg)
+        state = Awaiting::MsgPayload;
+
+      if (state != Awaiting::MsgPayload)
+        co_yield result;
+      break;
+    case Awaiting::MsgPayload:
+      input = co_await chan.read();
+      result.payload = _processPayload(input);
+      co_yield result;
+      state = Awaiting::ControlLine;
+      break;
+    }
   }
-  case AwaitingMsgPayload:
-    break;
-  }
+  co_return {}; // should return a chan close error?
 }
 
 // -----------
@@ -87,7 +110,7 @@ Error assign_hdr_val(Header &hdr, std::string const &field,
 
 // header parsing doesn't need to be blazingly fast
 // we use easier implementation
-Header Parser::_parseInfoHeader(str_view sv) {
+Header _parseInfoHeader(str_view sv) {
   enum State { FieldName, List, Value };
 
   Header hdr;
@@ -99,8 +122,7 @@ Header Parser::_parseInfoHeader(str_view sv) {
     switch (state) {
     case FieldName:
       end = sv.find_first_of(":");
-      // the sv can't end here, should have a value
-      if (end == sv.npos or end == sv.size() - 1)
+      if (end == sv.npos or end == sv.size() - 1) // no value, error
         return {{hdr::Error, err::InvalidMsg}};
       field_name = trim(sv.substr(0, end), " \"");
       sv = sv.substr(end + 1); // skip ':'
@@ -132,7 +154,7 @@ Header Parser::_parseInfoHeader(str_view sv) {
   return hdr;
 }
 
-ParseResult Parser::_parseControlLine(buf_view_t data) {
+ParseResult _parseControlLine(buf_view_t data) {
   auto sv = str_view{data};
   auto control_line = sv.substr(0, sv.find(CRLF));
   // Nats protocol conventions ---
@@ -162,7 +184,7 @@ ParseResult Parser::_parseControlLine(buf_view_t data) {
   }
 }
 
-ParseResult Parser::_parseMsgFields(std::vector<str_view> fields) {
+ParseResult _parseMsgFields(std::vector<str_view> fields) {
   auto size = fields.size();
   if (size != 3 and size != 4)
     return {.header = {{hdr::Error, err::InvalidMsg}}};
@@ -174,7 +196,6 @@ ParseResult Parser::_parseMsgFields(std::vector<str_view> fields) {
       res.ec != std::errc{})
     return {.header = {{hdr::Error, err::InvalidMsg}}};
 
-  state_ = State::AwaitingMsgPayload;
   return {
       .op = ParseResult::Msg,
       .bytes = bytes,
@@ -184,6 +205,6 @@ ParseResult Parser::_parseMsgFields(std::vector<str_view> fields) {
   };
 }
 
-void Parser::_processPayload(buf_view_t data) {}
+str_view _processPayload(buf_view_t data) {}
 
 } // namespace nats

@@ -5,7 +5,7 @@
 add_library(nats.test.base)
 target_sources(nats.test.base PRIVATE Main.cpp)
 target_include_directories(nats.test.base PUBLIC ../extern)
-target_link_libraries(nats.test.base PUBLIC nats.base nats)
+target_link_libraries(nats.test.base PUBLIC nats.base nats boost_cobalt)
 target_compile_definitions(nats.test.base PUBLIC NATS_TEST)
 
 add_executable(nats.test)

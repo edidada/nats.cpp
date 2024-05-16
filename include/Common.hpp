@@ -1,6 +1,7 @@
 // Copyright (C) 2024-2028 Jun Zhang and nats.cpp contributors
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <boost/cobalt/channel.hpp>
 #include <boost/cobalt/generator.hpp>
 #include <boost/cobalt/promise.hpp>
 #include <icecream.hpp>
@@ -37,8 +38,14 @@ using str_view = std::string_view;
 using buf_t = std::vector<byte>;
 using timeout_t = std::chrono::milliseconds;
 
-template <typename T> using promise_t = cobalt::promise<T>;
-template <typename T> using generator_t = cobalt::generator<T>;
+template <typename T> //
+using channel_t = cobalt::channel<T>;
+
+template <typename Return> //
+using promise_t = cobalt::promise<Return>;
+
+template <typename Yield, typename Push = void>
+using generator_t = cobalt::generator<Yield, Push>;
 
 struct JetStreamContext;
 struct JetStreamManager;

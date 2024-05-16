@@ -85,31 +85,7 @@ struct ParseResult {
   Error err() { return get<Error>(hdr::Error); }
 };
 
-struct Parser {
-  constexpr static auto MaxControlLineSize = 4096;
-  enum struct State {
-    AwaitingControlLine = 1,
-    AwaitingMsgPayload = 2,
-  };
-
-  void reset() {
-    buf_.clear();
-    state_ = State::AwaitingControlLine;
-    needed_ = 0;
-    header_needed_ = 0;
-  }
-
-  promise_t<ParseResult> parse(buf_view_t data);
-
-  Header _parseInfoHeader(str_view sv);
-  ParseResult _parseControlLine(buf_view_t data);
-  ParseResult _parseMsgFields(std::vector<str_view> fields);
-  void _processPayload(buf_view_t data);
-
-  buf_t buf_;
-  State state_;
-  size_t needed_;
-  size_t header_needed_;
-};
+constexpr static auto MaxControlLineSize = 4096;
+generator_t<ParseResult> parse(buf_view_t data);
 
 } // namespace nats
