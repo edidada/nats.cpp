@@ -90,8 +90,8 @@ struct Msg {
 
   promise_t<void> respond(buf_view_t data);
   promise_t<void> ack();
-  promise_t<Msg> ackSync(timeout_t timeout = 1s);
-  promise_t<void> nak(timeout_t delay = 0ms);
+  promise_t<Msg> ackSync(duration_t timeout = 1s);
+  promise_t<void> nak(duration_t delay = 0ms);
   // acknowledges a message delivered by JetStream is still being worked on
   promise_t<void> inProgress();
   // terminates a message delivered by JetStream and disables redeliveries

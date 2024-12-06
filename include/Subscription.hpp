@@ -12,7 +12,7 @@ namespace nats {
 // Subscription
 // -------------
 struct Subscription {
-  Conn conn;
+  Conn &conn;
   uint64_t sid;
   std::string subject;
   std::string queue;
@@ -31,7 +31,7 @@ struct Subscription {
   // JSI
 
   // should only be available when callback is not provided
-  promise_t<Msg> nextMsg(timeout_t timeout = 1s);
+  promise_t<Msg> nextMsg(duration_t timeout = 1s);
   generator_t<Msg> messages();
 
   // removes interest in a subject, but will process pending msgs

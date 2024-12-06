@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <Common.hpp>
+
+#include <boost/asio.hpp>
 
 #include <charconv>
 #include <exception>
 #include <functional>
 #include <mutex>
 #include <span>
+#include <sstream>
+#include <string>
 #include <unordered_map>
-
-#include <asio.hpp>
-
-#include "types.hpp"
+#include <utility>
 
 namespace nats {
 
@@ -48,20 +50,20 @@ struct ConnectConfig {
   }
 };
 
+struct Subscription {
+  using on_message = std::function< //
+      void(std::string_view subject, std::string_view reply_to,
+           std::string &&data)>;
+
+  uint64_t sid;
+  on_message callback;
+};
+
 using asio::io_context;
 using asio::ip::tcp;
 
 template <typename Stream> //
 class Connection {
-  struct Subscription {
-    using on_message = std::function< //
-        void(std::string_view subject, std::string_view reply_to,
-             std::string &&data)>;
-
-    uint64_t sid;
-    on_message callback;
-  };
-
 public:
   Connection() = default;
   Connection(Connection const &) = delete;
@@ -105,7 +107,7 @@ public:
     {
       auto _ = std::lock_guard{subs_mutex_};
       if (auto find = subs_.find(subs_id); find == subs_.end())
-        return {format("subscription not found: %s", subs_id)};
+        return {std::format("subscription not found: %s", subs_id)};
       else
         subs_.erase(find);
     }
@@ -114,7 +116,7 @@ public:
     return {};
   }
 
-  expected<uint64_t, Error>
+  std::expected<uint64_t, Error>
   subscribe(std::string_view subject, std::string_view queue,
             typename Subscription::on_message const &callback) {
     auto sid = next_sid();
@@ -246,7 +248,7 @@ private:
       if (auto res =
               std::from_chars(bytes_n_str.begin(), bytes_n_str.end(), bytes_n);
           res.ec != std::errc{}) {
-        return {nats::format("can't parse int in headers: %d", bytes_n_str)};
+        return {std::format("can't parse int in headers: %d", bytes_n_str)};
       }
 
       return reply_to ? on_message(results[0], results[1], results[2], bytes_n)
@@ -264,7 +266,7 @@ private:
       ++p; // space
       return Error(header.substr(p, header.size() - p));
     } else {
-      return {format("unknown message type: %s", cmd.data())};
+      return {std::format("unknown message type: %s", cmd.data())};
     }
   }
 
@@ -289,6 +291,6 @@ inline auto run(TcpConnection &conn, std::string_view port = "4222",
 }
 
 template <typename Stream>
-expected<Connection<Stream>, Error> connect(std::string_view url) {}
+std::expected<Connection<Stream>, Error> connect(std::string_view url) {}
 
 } // namespace nats

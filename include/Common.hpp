@@ -21,11 +21,12 @@
 
 namespace nats {
 
-using namespace std::literals;
 namespace rng = std::ranges;
 namespace vws = std::views;
 namespace asio = boost::asio;
 namespace cobalt = boost::cobalt;
+
+using namespace std::literals;
 
 // ------------------------------
 // typedefs and forward declares
@@ -38,7 +39,10 @@ using optional_str = std::optional<std::string>;
 using buf_view_t = std::string_view;
 using str_view = std::string_view;
 using buf_t = std::vector<byte>;
-using timeout_t = std::chrono::milliseconds;
+
+using clock_t = std::chrono::steady_clock;
+using duration_t = std::chrono::milliseconds;
+using timepoint_t = std::chrono::time_point<clock_t>;
 
 template <typename T> //
 using channel_t = cobalt::channel<T>;
@@ -58,6 +62,10 @@ struct JetStreamManager;
 struct Subscription;
 struct Msg;
 struct Conn;
+struct Client;
+
+using Credentials =
+    std::variant<std::string, std::tuple<std::string, std::string>>;
 
 using MsgHandler = std::function<void(spy<Msg>)>;
 
@@ -80,25 +88,27 @@ using MsgHandler = std::function<void(spy<Msg>)>;
 namespace default_ {
 
 constexpr auto Version = "1.0.0";
-constexpr auto Url = "nats:://127.0.0.1:4222";
+constexpr auto Url = "nats://127.0.0.1:4222";
 constexpr auto Port = 4222;
 constexpr auto MaxReconnect = 60;
 constexpr auto ReconnectWait = 2s;
 constexpr auto ReconnectJitter = 100ms;
 constexpr auto ReconnectJitterTLS = 1s;
-constexpr auto Timeout = 2s;
+constexpr auto ConnectTimeout = 2s;
 constexpr auto PingInterval = 2min;
-constexpr auto MaxPingOut = 2;
-constexpr auto MaxChanLen = 64 * 1024;             // 64k
+constexpr auto MaxOutstandingPings = 2;
+constexpr auto MaxQueueSize = 64 * 1024;           // 64k
 constexpr auto ReconnectBufSize = 8 * 1024 * 1024; // 8MB
-constexpr auto RequestChanLen = 8;
+constexpr auto RequestQueueSize = 8;
 constexpr auto DrainTimeout = 30s;
 constexpr auto FlushTimeout = 1min;
 constexpr auto LangString = "C++";
+constexpr auto InboxPrefix = "_INBOX";
+constexpr size_t PendingSize = 2 * 1024 * 1024; // 2MB
 
 constexpr auto ScratchSize = 512;
 constexpr auto BufSize = 32768;
-constexpr auto FlushChanSize = 1;
+constexpr auto FlusherQueueSize = 1;
 constexpr auto SrvPoolSize = 4;
 constexpr auto NuidSize = 22;
 constexpr auto WsPortString = "80";
@@ -203,12 +213,7 @@ public:
 
   Error() : Error(None) {}
   Error(std::string const &what) : Error(Other, what) {}
-  Error(Code code, std::string const &what = "")
-      : Error(code, what, std::source_location::current(),
-              std::stacktrace::current()) {}
-  Error(Code code, std::string const &what, std::source_location const &where,
-        std::stacktrace const &who)
-      : code_{code}, what_{what}, where_{where}, who_{who} {}
+  Error(Code code, std::string const &what = "") : code_{code}, what_{what} {}
 
   Error(Error const &) = default;
   Error(Error &&) = default;
@@ -216,8 +221,6 @@ public:
   Error &operator=(Error &&) = default;
 
   Code code() const noexcept { return code_; }
-  std::source_location const &where() const noexcept { return where_; }
-  std::stacktrace const &who() const noexcept { return who_; }
   // mutable, user can add information
   std::string &what() noexcept { return what_; }
 
@@ -235,6 +238,23 @@ public:
 private:
   Code code_{None};
   std::string what_{};
+};
+
+class Except : public Error {
+public:
+  Except(std::string const &what) : Error(what) {}
+  Except(Code code, std::string const &what = "")
+      : Error(code, what), where_{std::source_location::current()},
+        who_{std::stacktrace::current()} {}
+
+  Except(Code code, std::string const &what, std::source_location const &where,
+         std::stacktrace const &who)
+      : Error(code, what), where_{where}, who_{who} {}
+
+  std::source_location const &where() const noexcept { return where_; }
+  std::stacktrace const &who() const noexcept { return who_; }
+
+private:
   std::source_location where_{};
   std::stacktrace who_{};
 };
@@ -249,7 +269,12 @@ auto unexpected(
       Error(code, std::format("error: {}", value), where, who)};
 }
 
-inline void panic(std::string const &what) { throw Error(what); }
+inline void
+panic(std::string const &what,
+      std::source_location const &where = std::source_location::current(),
+      std::stacktrace const &who = std::stacktrace::current()) {
+  throw Except(Error::Other, what, where, who);
+}
 
 namespace err {
 
@@ -375,87 +400,24 @@ struct Statistics {
   uint64_t reconnects;
 };
 
-using ConnHandler = std::function<void(spy<Conn>)>;
-using ConnErrHandler = std::function<void(Conn &, Error &)>;
-using ErrHandler = std::function<void(spy<Conn>, spy<Subscription>, Error &)>;
-using UserJWTHandler = std::function<void(std::string const &, Error &)>;
-// using TLSCertHandler = std::function<void(tls::Certificate, Error &)>;
-// using RootCAsHandler = std::function<void(x509::CertPool, Error &)>;
-using SignatureHandler = std::function<void(std::span<byte>, Error)>;
-using AuthTokenHandler = std::function<void(std::string const &)>;
-using ReconnectDelayHandler =
-    std::function<std::chrono::milliseconds(int attempts)>;
+struct ConnectCallbacks {
+  using Err = std::function<promise_t<void>(Client &, Error &)>;
+  using Disconnected = std::function<promise_t<void>(spy<Conn>)>;
+  using Closed = std::function<promise_t<void>(spy<Conn>)>;
+  using Discovered = std::function<promise_t<void>(spy<Conn>)>;
+  using Reconnected = std::function<promise_t<void>(spy<Conn>)>;
 
-struct Options {
-  std::string url{};
-  // InProcessConnProvider inprocess_server{};
-  std::vector<std::string> servers{};
-  bool no_randomize{};
-  bool no_echo{};
-  std::string name{};
-  bool verbose{};
-  bool pedantic{};
-  bool secure{};
-  // std::optional<tls::Config> tls_config{};
-  // TLSCertHandler tls_cert_cb{};
-  bool tls_handshake_first{};
-  // RootCAsHandler rootcas_cb{};
-  bool allow_reconnect{};
-  int max_reconnect{};
-  std::chrono::seconds reconnect_wait{};
-  ReconnectDelayHandler custom_reconnect_delay_cb{};
-  std::chrono::milliseconds reconnect_jitter{};
-  std::chrono::milliseconds reconnect_jitter_tls{};
-  std::chrono::seconds timeout{};
-  std::chrono::seconds drain_timeout{};
-  std::chrono::minutes flush_timeout{};
-  std::chrono::seconds ping_interval{};
-  int max_pings_out{};
-  ConnHandler closed_cb{};
-  ConnHandler disconnected_cb{};
-  ConnErrHandler disconnected_err_cb{};
-  ConnHandler connected_cb{};
-  ConnHandler discovered_servers_cb{};
-  ErrHandler async_error_cb{};
-  int reconnect_buf_size{};
-  int sub_chan_len{};
-  UserJWTHandler user_jwt{};
-  std::string nkey{};
-  SignatureHandler signature_cb{};
-  std::string user{};
-  std::string password{};
-  std::string token{};
-  AuthTokenHandler token_handler{};
-  // std::shared_ptr<net::Dialer> dialer{};
-  // CustomDialer custom_dialer{};
-  bool use_old_request_style{};
-  bool no_callbacks_after_client_close{};
-  ConnHandler lame_duck_mode_handler{};
-  bool retry_on_failed_connect{};
-  bool compression{};
-  std::string proxy_path{};
-  std::string inbox_prefix{};
-  bool ignore_auth_error_abort{};
-  bool skip_host_lookup{};
-
-  std::expected<std::unique_ptr<Conn>, Error> connect();
+  Err err;
+  Disconnected disconnected;
+  Closed closed;
+  Discovered discovered;
+  Reconnected reconnected;
 };
 
-inline Options get_default_options() {
-  return Options{
-      .allow_reconnect = true,
-      .max_reconnect = default_::MaxReconnect,
-      .reconnect_wait = default_::ReconnectWait,
-      .reconnect_jitter = default_::ReconnectJitter,
-      .reconnect_jitter_tls = default_::ReconnectJitterTLS,
-      .timeout = default_::Timeout,
-      .drain_timeout = default_::DrainTimeout,
-      .flush_timeout = default_::FlushTimeout,
-      .ping_interval = default_::PingInterval,
-      .max_pings_out = default_::MaxPingOut,
-      .reconnect_buf_size = default_::ReconnectBufSize,
-      .sub_chan_len = default_::MaxChanLen,
-  };
-}
+struct SslHandlers {
+  using SignatureHandler = std::function<void(std::span<byte>, Error)>;
+  using UserJWTHandler = std::function<void(std::string const &, Error &)>;
+  using CredentialsHandler = std::function<void(Credentials const &)>;
+};
 
 } // namespace nats

@@ -12,7 +12,7 @@ target_link_directories(nats.base INTERFACE ~/Apps/boost_1_85_0/stage/lib)
 target_link_libraries(nats.base INTERFACE stdc++exp)
 
 add_library(nats)
-target_sources(nats PUBLIC Protocol.cpp)
+target_sources(nats PUBLIC Protocol.cpp Client.cpp)
 target_link_libraries(nats PUBLIC nats.base)
 
 if(NATS_USER_CONFIG_HEADER)

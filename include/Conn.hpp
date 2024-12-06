@@ -13,8 +13,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "types.hpp"
-
 namespace nats {
 
 auto go(auto) {} // TODO
